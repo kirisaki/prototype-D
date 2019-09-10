@@ -15,6 +15,7 @@ data Expr
   | Lambda String Expr
   | Apply Expr Expr
   | If Expr Expr Expr
+  | Let [Decl] Expr
   deriving(Eq, Show)
 
 data Decl
@@ -34,10 +35,19 @@ reserved =
   [ "if"
   , "then"
   , "else"
+  , "let"
+  , "in"
   ]
 
 if_ :: Parser Expr
 if_ = If <$> (string "if" *> expr) <*> (string "then" *> expr) <*> (string "else" *> expr)
+
+let_ :: Parser Expr
+let_ =
+  let
+    let1 = Let <$> (string "let" *> space *> ((:[]) <$> decl)) <*> (space *> string "in" *> expr)
+  in
+    let1
 
 var :: Parser Expr
 var = do
@@ -46,7 +56,7 @@ var = do
   pure $ Var sym
 
 lambda :: Parser Expr
-lambda = Lambda <$> (char '\\' >> space *> some letterChar) <*> (space >> string "->" >> space *> expr)
+lambda = Lambda <$> (char '\\' >> space *> some letterChar) <*> (space *> string "->" *> space *> expr)
 
 
 term :: Parser Expr
@@ -64,10 +74,13 @@ apply = do
       loop $ op lhs rhs
 
 expr :: Parser Expr
-expr = between space space $ if_ <|> apply <|> term
+expr = between space space $ if_ <|> let_ <|> apply <|> term
 
 parens :: Parser Expr -> Parser Expr
 parens = between (char '(' <* space) (space *> char ')')
+
+decl :: Parser Decl
+decl = Decl <$> some (alphaNumChar <|> symbolChar) <*> (space *> char '=' *> expr)
 
 someFunc :: IO ()
 someFunc = do
@@ -75,3 +88,4 @@ someFunc = do
   parseTest expr "(\\x -> add x x)12"
   parseTest expr "x y z "
   parseTest expr "if f x then y else z"
+  parseTest expr "let x = 1 in x"
