@@ -1,3 +1,4 @@
+{-# LANGUAGE TupleSections #-}
 module Lib
     ( someFunc
     ) where
@@ -8,6 +9,8 @@ import Data.Void
 import Data.Functor
 import qualified Data.Set as SE
 import Control.Monad
+import qualified Text.Megaparsec.Char.Lexer as Lx
+import qualified Data.List as L
 
 data Expr
   = Var String
@@ -39,16 +42,29 @@ reserved =
   , "in"
   ]
 
-if_ :: Parser Expr
-if_ = If <$> (string "if" *> expr) <*> (string "then" *> expr) <*> (string "else" *> expr)
+if_, then_, else_, let_, in_ :: String
+if_ = "if"
+then_ = "then"
+else_ = "else"
+let_ = "let"
+in_ = "in"
 
-let_ :: Parser Expr
-let_ =
+ifExpr :: Parser Expr
+ifExpr = If <$> (string if_ *> expr) <*> (string then_ *> expr) <*> (string else_ *> expr) 
+
+letExpr :: Parser Expr
+letExpr =
   let
-    let1 = Let <$> (string "let" *> space *> ((:[]) <$> decl)) <*> (space *> string "in" *> expr)
+    let1 = do
+      ds <- Lx.nonIndented scn (Lx.indentBlock scn (string let_ >> pure (Lx.IndentSome Nothing pure decl)))
+      e:es <- Lx.nonIndented scn (Lx.indentBlock scn (string in_ >> pure (Lx.IndentSome Nothing pure expr)))
+      unless (L.null es) $ failure Nothing SE.empty
+      pure $ Let ds e
+    let2 = Let <$> (string let_ *> space *> ((:[]) <$> decl)) <*> (space *> string in_ *> expr)
   in
-    let1
+    try let1 <|> let2
 
+      
 var :: Parser Expr
 var = do
   sym <- some (alphaNumChar <|> symbolChar)
@@ -60,7 +76,7 @@ lambda = Lambda <$> (char '\\' >> space *> some letterChar) <*> (space *> string
 
 
 term :: Parser Expr
-term = between space space $ true <|> false <|> var <|> lambda <|> parens expr
+term =  true <|> false <|> var <|> lambda <|> parens expr
 
 apply :: Parser Expr
 apply = do
@@ -69,12 +85,12 @@ apply = do
   where
     loop e = try (loop' e) <|> pure e
     loop' lhs = do
-      op <- space $> Apply
+      op <- lexeme $ pure Apply
       rhs <- term
       loop $ op lhs rhs
 
 expr :: Parser Expr
-expr = between space space $ if_ <|> let_ <|> apply <|> term
+expr = between sc sc $ ifExpr <|> letExpr <|> apply <|> term
 
 parens :: Parser Expr -> Parser Expr
 parens = between (char '(' <* space) (space *> char ')')
@@ -82,10 +98,30 @@ parens = between (char '(' <* space) (space *> char ')')
 decl :: Parser Decl
 decl = Decl <$> some (alphaNumChar <|> symbolChar) <*> (space *> char '=' *> expr)
 
+lineComment :: Parser ()
+lineComment = Lx.skipLineComment "--"
+
+scn :: Parser ()
+scn = Lx.space space1 lineComment empty
+
+sc :: Parser ()
+sc = Lx.space (void $ some (char ' ' <|> char '\t')) lineComment empty
+
+lexeme :: Parser a -> Parser a
+lexeme = Lx.lexeme sc
+
 someFunc :: IO ()
 someFunc = do
-  parseTest expr "(\\x -> add x x)"
-  parseTest expr "(\\x -> add x x)12"
+  parseTest expr "( \\x -> add x x)"
+  parseTest expr "( \\x -> add x x)12"
   parseTest expr "x y z "
   parseTest expr "if f x then y else z"
+
   parseTest expr "let x = 1 in x"
+  parseTest expr $
+    "let\n" <>
+    "  x = 1\n" <>
+    "  y = 1\n" <>
+    "in\n" <>
+    "  x\n"
+
