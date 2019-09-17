@@ -55,14 +55,15 @@ ifExpr = If <$> (string if_ *> expr) <*> (string then_ *> expr) <*> (string else
 letExpr :: Parser Expr
 letExpr =
   let
-    let1 = do
-      ds <- Lx.nonIndented scn (Lx.indentBlock scn (string let_ >> pure (Lx.IndentSome Nothing pure decl)))
+    letBlock = Lx.nonIndented scn (Lx.indentBlock scn (string let_ >> pure (Lx.IndentSome Nothing pure decl)))
+    letLine = string let_ *> space *> ((:[]) <$> decl)
+    inBlock = do
       e:es <- Lx.nonIndented scn (Lx.indentBlock scn (string in_ >> pure (Lx.IndentSome Nothing pure expr)))
       unless (L.null es) $ failure Nothing SE.empty
-      pure $ Let ds e
-    let2 = Let <$> (string let_ *> space *> ((:[]) <$> decl)) <*> (space *> string in_ *> expr)
+      pure e
+    inLine = string in_ *> expr
   in
-    try let1 <|> let2
+    Let <$> (try letBlock <|> letLine) <*> (try inBlock <|> inLine)
 
       
 var :: Parser Expr
@@ -90,7 +91,7 @@ apply = do
       loop $ op lhs rhs
 
 expr :: Parser Expr
-expr = between sc sc $ ifExpr <|> letExpr <|> apply <|> term
+expr = between space space $ ifExpr <|> letExpr <|> apply <|> term
 
 parens :: Parser Expr -> Parser Expr
 parens = between (char '(' <* space) (space *> char ')')
@@ -116,12 +117,19 @@ someFunc = do
   parseTest expr "( \\x -> add x x)12"
   parseTest expr "x y z "
   parseTest expr "if f x then y else z"
-
   parseTest expr "let x = 1 in x"
+  parseTest expr $
+    "let x = 1 in\n" <>
+    "  x\n"
   parseTest expr $
     "let\n" <>
     "  x = 1\n" <>
     "  y = 1\n" <>
     "in\n" <>
     "  x\n"
+  parseTest expr $
+    "let\n" <>
+    "  x = 1\n" <>
+    "  y = 1\n" <>
+    "in x\n"
 
