@@ -11,6 +11,7 @@ import qualified Data.Set as SE
 import Control.Monad
 import qualified Text.Megaparsec.Char.Lexer as Lx
 import qualified Data.List as L
+import Debug.Trace
 
 data Expr
   = Var String
@@ -55,17 +56,22 @@ ifExpr = If <$> (string if_ *> expr) <*> (string then_ *> expr) <*> (string else
 letExpr :: Parser Expr
 letExpr =
   let
-    letBlock = Lx.nonIndented scn (Lx.indentBlock scn (string let_ >> pure (Lx.IndentSome Nothing pure decl)))
-    letLine = string let_ *> space *> ((:[]) <$> decl)
-    inBlock = do
-      e:es <- Lx.nonIndented scn (Lx.indentBlock scn (string in_ >> pure (Lx.IndentSome Nothing pure expr)))
+    inlineLetIn = string let_ *> sc *> ((:[]) <$> decl) <* sc <* string in_
+    blockLetIn = Lx.indentBlock scn (string let_ *> spaces $> Lx.IndentSome Nothing pure decl) <* string in_
+    extractLet p = do
+      (ds, e:es) <- Lx.indentBlock scn (
+        do
+          decls <- p
+          pure $  Lx.IndentSome Nothing (\exprs -> pure (decls, exprs)) expr
+        )
       unless (L.null es) $ failure Nothing SE.empty
-      pure e
-    inLine = string in_ *> expr
+      pure $ Let ds e
   in
-    Let <$> (try letBlock <|> letLine) <*> (try inBlock <|> inLine)
+    try (Let <$> inlineLetIn <*> expr) <|>
+    try (extractLet inlineLetIn) <|>
+    try (Let <$> blockLetIn <*> expr) <|>
+    extractLet blockLetIn
 
-      
 var :: Parser Expr
 var = do
   sym <- some (alphaNumChar <|> symbolChar)
@@ -89,15 +95,18 @@ apply = do
       op <- lexeme $ pure Apply
       rhs <- term
       loop $ op lhs rhs
+spaces :: Parser String
+spaces = many $ char ' '
+
 
 expr :: Parser Expr
-expr = between space space $ ifExpr <|> letExpr <|> apply <|> term
+expr = between spaces spaces $ ifExpr <|> letExpr <|> apply <|> term
 
 parens :: Parser Expr -> Parser Expr
 parens = between (char '(' <* space) (space *> char ')')
 
 decl :: Parser Decl
-decl = Decl <$> some (alphaNumChar <|> symbolChar) <*> (space *> char '=' *> expr)
+decl = Decl <$> (between spaces spaces . some $  alphaNumChar <|> symbolChar) <*> (char '=' *> expr)
 
 lineComment :: Parser ()
 lineComment = Lx.skipLineComment "--"
@@ -119,8 +128,8 @@ someFunc = do
   parseTest expr "if f x then y else z"
   parseTest expr "let x = 1 in x"
   parseTest expr $
-    "let x = 1 in\n" <>
-    "  x\n"
+    "let w = 1 in\n" <>
+    "  w\n"
   parseTest expr $
     "let\n" <>
     "  x = 1\n" <>
@@ -131,5 +140,12 @@ someFunc = do
     "let\n" <>
     "  x = 1\n" <>
     "  y = 1\n" <>
-    "in x\n"
+    "in y\n"
+  parseTest expr $
+    "let\n" <>
+    "  x = 1\n" <>
+    "  y = 1\n" <>
+    "in\n" <>
+    " y\n" <>
+    " x\n"
 
